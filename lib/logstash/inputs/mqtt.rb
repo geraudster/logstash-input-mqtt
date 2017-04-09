@@ -1,24 +1,25 @@
 # encoding: utf-8
 require "logstash/inputs/base"
 require "logstash/namespace"
-require "stud/interval"
 require "socket" # for Socket.gethostname
 require "mqtt"
-
 
 # Receive events from a MQTT topic
 
 class LogStash::Inputs::Mqtt < LogStash::Inputs::Base
   config_name "mqtt"
 
-  # The codec used for input data. Input codecs are a convenient method for decoding your data before it enters the input, without needing a separate filter in your Logstash pipeline.
-  default :codec, "plain" 
-  
+  #
+  # Codecs are used to turn message strings into message objects.
+  # Useful codecs might be json, or protobuf
+  #
+  default :codec, "plain"
+
   # The host of the MQTT broker
-  config :mqttHost, :validate => :string, :default => "localhost"
+  config :broker_host, :validate => :string, :default => "192.168.1.20"
   
   # The port that the MQTT broker is using
-  config :port, :validate => :number, :default => 1883
+  config :broker_port, :validate => :number, :default => 1883
   
   # Whether connection to the MQTT broker is using SSL or not.
   config :ssl, :validate => :boolean, :default => false
@@ -36,17 +37,18 @@ class LogStash::Inputs::Mqtt < LogStash::Inputs::Base
   config :clean_session, :validate => :boolean, :default => true
 
   # The topic that the plugin should subscribe to
-  config :topic, :validate => :string, :required => true
+  config :topic, :validate => :string, :required => true, :default => "#"
 
   # The topic qos that the plugin should subscribe with
   config :qos, :validate => :number, :default => 0
 
   public
   def register
+    @logger.info("mqtt register")
     @host = Socket.gethostname
     @client = MQTT::Client.connect(
-        :host => @mqttHost,
-        :port => @port,
+        :host => @broker_host,
+        :port => @broker_port,
         :ssl => @ssl,
         :username => @username,
         :password => @password,
@@ -56,17 +58,35 @@ class LogStash::Inputs::Mqtt < LogStash::Inputs::Base
   end # def register
 
   def run(queue)
+    @logger.info("mqtt run")
+    while !stop? 
+      @logger.info("mqtt loop")
+      # we can abort the loop if stop? becomes true
 
-    @client.subscribe(@topic => @qos)
-    @client.get do |topic,message|
+      @logger.info("subscribe to #{@topic}")
+      @client.subscribe(@topic => @qos)
+      @client.get do |topic,message|
+        @logger.info("got message #{topic} <= #{message}")
         @codec.decode(message) do |event|
-            event["host"] ||= @host
-            event["topic"] = topic
-            
+            event.set('host', @host)
+            event.set('topic', topic)
+
             decorate(event)
+            @logger.info("Sending event #{event}")
             queue << event
         end
-    end
+      end
+    end # loop
   end # def run
 
+  def stop
+    @logger.info("mqtt stop")
+    # nothing to do in this case so it is not necessary to define stop
+    # examples of common "stop" tasks:
+    #  * close sockets (unblocking blocking reads/accepts)
+    #  * cleanup temporary files
+    #  * terminate spawned threads
+  end
+
 end # class LogStash::Inputs::Mqtt
+                                   
